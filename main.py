@@ -1,5 +1,4 @@
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 import httpx
 import os
@@ -7,41 +6,46 @@ from datetime import datetime, timezone
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+CORS_HEADERS = {"Access-Control-Allow-Origin": "*"}
+GENDERIZE_URL = "https://api.genderize.io/"
 
 
 @app.middleware("http")
-async def add_cors_header(request, call_next):
+async def add_cors_header(request: Request, call_next):
     response = await call_next(request)
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response
 
-GENDERIZE_URL = "https://api.genderize.io/"
+
+@app.options("/api/classify")
+async def options_classify():
+    return JSONResponse(
+        status_code=200,
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
 
 
 @app.get("/api/classify")
 async def classify(name: str = Query(default=None)):
-    # Validate: missing or empty name
     if not name or not name.strip():
         return JSONResponse(
             status_code=400,
             content={"status": "error", "message": "name query parameter is required"},
+            headers=CORS_HEADERS,
         )
 
-    # Validate: non-string (FastAPI enforces str type, but handle numeric-only strings
-    # that were passed as plain numbers — Query already coerces, so we check the type)
     if not isinstance(name, str):
         return JSONResponse(
             status_code=422,
             content={"status": "error", "message": "name must be a string"},
+            headers=CORS_HEADERS,
         )
 
-    # Call Genderize API
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(GENDERIZE_URL, params={"name": name})
@@ -51,21 +55,23 @@ async def classify(name: str = Query(default=None)):
         return JSONResponse(
             status_code=502,
             content={"status": "error", "message": f"Genderize API error: {exc.response.status_code}"},
+            headers=CORS_HEADERS,
         )
     except Exception:
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": "Failed to reach Genderize API"},
+            headers=CORS_HEADERS,
         )
 
     gender = data.get("gender")
     count = data.get("count", 0)
 
-    # Edge case: no prediction available
     if gender is None or count == 0:
         return JSONResponse(
             status_code=200,
             content={"status": "error", "message": "No prediction available for the provided name"},
+            headers=CORS_HEADERS,
         )
 
     probability = data.get("probability", 0.0)
@@ -86,6 +92,7 @@ async def classify(name: str = Query(default=None)):
                 "processed_at": processed_at,
             },
         },
+        headers=CORS_HEADERS,
     )
 
 
